@@ -107,6 +107,7 @@ a { color: inherit; }
 }
 
 img { max-width: 100%; display: block; }
+svg { width: 1em; height: 1em; vertical-align: -0.15em; }
 
 /* =========================================================
    App shell
@@ -178,6 +179,7 @@ img { max-width: 100%; display: block; }
   justify-content: center;
 }
 .icon-btn:hover { background: var(--border-soft); }
+.icon-btn svg { width: 20px; height: 20px; }
 
 main.screen {
   flex: 1 1 auto;
@@ -218,6 +220,9 @@ main.screen {
 .navitem.emergency .navitem__icon { color: var(--flare); }
 
 .navitem__icon { width: 22px; height: 22px; }
+.navitem__icon svg { width: 100%; height: 100%; }
+
+.empty-icon svg { width: 40px; height: 40px; margin: 0 auto; color: var(--text-secondary); }
 
 .badge {
   position: absolute;
@@ -281,6 +286,8 @@ main.screen {
   background: var(--text-tertiary);
 }
 .avatar .presence-dot.connected { background: var(--signal); }
+.avatar.group-avatar { background: color-mix(in srgb, var(--beacon) 15%, var(--surface-raised)); color: var(--beacon); }
+.avatar.group-avatar svg { width: 22px; height: 22px; }
 
 .list-row__body { flex: 1 1 auto; min-width: 0; }
 .list-row__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -447,6 +454,7 @@ main.screen {
   justify-content: center;
   gap: 6px;
 }
+.btn svg { width: 16px; height: 16px; }
 .btn.primary { background: var(--beacon); border-color: var(--beacon); color: #1A0900; }
 .btn.danger { background: transparent; border-color: color-mix(in srgb, var(--flare) 50%, var(--border)); color: var(--flare); }
 .btn.ghost { background: transparent; }
@@ -542,6 +550,7 @@ main.screen {
   font-family: var(--font-mono);
 }
 .form-group input[type="text"],
+.form-group input[type="password"],
 .form-group select,
 .form-group textarea {
   width: 100%;
@@ -653,6 +662,7 @@ main.screen {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--flare) 45%, transparent);
   z-index: 5;
 }
+.sos-fab svg { width: 26px; height: 26px; }
 
 /* =========================================================
    Modal / sheet

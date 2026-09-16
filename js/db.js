@@ -2,7 +2,7 @@
 // Stores: profile, contacts, threads, messages, blocklist, sos, meta
 (function () {
   const DB_NAME = 'btzone-db';
-  const DB_VERSION = 1;
+  const DB_VERSION = 3; // bumped to add 'groups' store
   let dbPromise = null;
 
   function open() {
@@ -34,6 +34,12 @@
         }
         if (!db.objectStoreNames.contains('meta')) {
           db.createObjectStore('meta', { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains('keys')) {
+          db.createObjectStore('keys', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('groups')) {
+          db.createObjectStore('groups', { keyPath: 'id' });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -88,18 +94,18 @@
   }
 
   async function exportAll() {
-    const [profile, contacts, threads, messages, blocklist, sos, meta] = await Promise.all([
-      all('profile'), all('contacts'), all('threads'), all('messages'), all('blocklist'), all('sos'), all('meta')
+    const [profile, contacts, threads, messages, blocklist, sos, meta, groups] = await Promise.all([
+      all('profile'), all('contacts'), all('threads'), all('messages'), all('blocklist'), all('sos'), all('meta'), all('groups')
     ]);
     return {
       exportedAt: new Date().toISOString(),
       appVersion: (window.BTZONE_CHANGELOG && window.BTZONE_CHANGELOG[0]) ? window.BTZONE_CHANGELOG[0].version : 'unknown',
-      profile, contacts, threads, messages, blocklist, sos, meta
+      profile, contacts, threads, messages, blocklist, sos, meta, groups
     };
   }
 
   async function importAll(data) {
-    const stores = ['profile', 'contacts', 'threads', 'messages', 'blocklist', 'sos', 'meta'];
+    const stores = ['profile', 'contacts', 'threads', 'messages', 'blocklist', 'sos', 'meta', 'groups'];
     for (const s of stores) {
       if (!Array.isArray(data[s])) continue;
       const store = await tx(s, 'readwrite');

@@ -68,6 +68,14 @@
         const bytes = new TextEncoder().encode(JSON.stringify(packet));
         await txChar.writeValue(bytes);
       } };
+    },
+
+    async reconnectById(deviceId) {
+      if (!this.supported() || !navigator.bluetooth.getDevices) throw new Error('Cannot reconnect automatically in this browser.');
+      const devices = await navigator.bluetooth.getDevices();
+      const device = devices.find((d) => d.id === deviceId);
+      if (!device) throw new Error('Device not found — may be out of range.');
+      return this._connect(device);
     }
   };
 
@@ -83,7 +91,14 @@
         emit({ type: 'packet', deviceId: id, packet: simulateReply(packet) });
       } };
     },
-    async reconnectKnown() { return []; }
+    async reconnectKnown() { return []; },
+    async reconnectById(deviceId) {
+      await wait(400);
+      return { deviceId, name: 'Demo Device', send: async (packet) => {
+        await wait(400 + Math.random() * 500);
+        emit({ type: 'packet', deviceId, packet: simulateReply(packet) });
+      } };
+    }
   };
 
   function simulateReply(packet) {
@@ -107,6 +122,7 @@
     isSupported: () => BleTransport.supported(),
     requestPairing: (demoMode) => getTransport(demoMode).requestPairing(),
     reconnectKnown: (demoMode) => getTransport(demoMode).reconnectKnown(),
+    reconnectById: (deviceId, demoMode) => getTransport(demoMode).reconnectById(deviceId),
     on: (fn) => { listeners.add(fn); return () => listeners.delete(fn); }
   };
 })();

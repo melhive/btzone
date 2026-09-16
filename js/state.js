@@ -10,15 +10,21 @@
     messages: [],
     blocklist: [],
     sos: [],
+    groups: [],
     settings: {
       theme: 'dark',
       demoMode: true,
       soundEnabled: true,
       vibrationEnabled: true,
-      ttlDefaultHours: 0 // 0 = off
+      ttlDefaultHours: 0, // 0 = off
+      appLockEnabled: false,
+      appLockHash: null,
+      appLockSalt: null
     },
+    identityKeys: null, // { privateKey, publicKey } CryptoKey pair, loaded once
     route: '#/chats',
-    activeThreadId: null
+    activeThreadId: null,
+    locked: false
   };
 
   function emit() { listeners.forEach((fn) => fn(state)); }
@@ -27,8 +33,8 @@
   function uid(prefix) { return prefix + '-' + Math.random().toString(36).slice(2, 10); }
 
   async function loadAll() {
-    const [profile, contacts, threads, messages, blocklist, sos, settingsRow] = await Promise.all([
-      DB.all('profile'), DB.all('contacts'), DB.all('threads'), DB.all('messages'), DB.all('blocklist'), DB.all('sos'), DB.get('meta', 'settings')
+    const [profile, contacts, threads, messages, blocklist, sos, settingsRow, keysRow, groups] = await Promise.all([
+      DB.all('profile'), DB.all('contacts'), DB.all('threads'), DB.all('messages'), DB.all('blocklist'), DB.all('sos'), DB.get('meta', 'settings'), DB.get('keys', 'identity'), DB.all('groups')
     ]);
     state.profile = profile[0] || null;
     state.contacts = contacts;
@@ -36,6 +42,7 @@
     state.messages = messages;
     state.blocklist = blocklist;
     state.sos = sos;
+    state.groups = groups;
     if (settingsRow) state.settings = Object.assign(state.settings, settingsRow.value);
     if (state.settings.theme) document.documentElement.setAttribute('data-theme', state.settings.theme);
 
@@ -43,8 +50,60 @@
       await seedDemoData();
       return loadAll();
     }
+
+    if (keysRow) {
+      state.identityKeys = { privateKey: keysRow.privateKey, publicKey: keysRow.publicKey };
+    } else if (window.BTZoneCrypto && window.BTZoneCrypto.supported) {
+      const pair = await window.BTZoneCrypto.generateIdentityKeyPair();
+      await DB.put('keys', { id: 'identity', privateKey: pair.privateKey, publicKey: pair.publicKey });
+      state.identityKeys = pair;
+    }
+
+    state.locked = !!state.settings.appLockEnabled;
     sweepExpiredMessages();
     emit();
+  }
+
+  async function myPublicKeyJwk() {
+    if (!state.identityKeys) return null;
+    return window.BTZoneCrypto.exportPublicKeyJwk(state.identityKeys.publicKey);
+  }
+
+  function setContactPublicKey(contactOrDeviceId, jwk) {
+    const contact = typeof contactOrDeviceId === 'string'
+      ? state.contacts.find((c) => c.deviceId === contactOrDeviceId)
+      : contactOrDeviceId;
+    if (!contact) return;
+    contact.peerPublicKeyJwk = jwk;
+    DB.put('contacts', contact);
+  }
+
+  async function sharedKeyFor(contact) {
+    if (!contact || !contact.peerPublicKeyJwk || !state.identityKeys) return null;
+    return window.BTZoneCrypto.getSharedKey(contact.id, state.identityKeys.privateKey, contact.peerPublicKeyJwk);
+  }
+
+  // ---------------- App lock ----------------
+
+  async function setAppLockPin(pin) {
+    const salt = Math.random().toString(36).slice(2);
+    const hash = await window.BTZoneCrypto.hashPin(pin, salt);
+    await saveSettings({ appLockEnabled: true, appLockHash: hash, appLockSalt: salt });
+  }
+
+  async function disableAppLock() {
+    await saveSettings({ appLockEnabled: false, appLockHash: null, appLockSalt: null });
+  }
+
+  async function tryUnlock(pin) {
+    if (!state.settings.appLockHash) return true;
+    const hash = await window.BTZoneCrypto.hashPin(pin, state.settings.appLockSalt);
+    if (hash === state.settings.appLockHash) {
+      state.locked = false;
+      emit();
+      return true;
+    }
+    return false;
   }
 
   async function saveSettings(partial) {
@@ -98,8 +157,8 @@
     return contact;
   }
 
-  async function addManualOrQRContact({ name, avatar, deviceId }) {
-    const contact = { id: uid('contact'), deviceId: deviceId || uid('device'), name, avatar: avatar || null, status: 'accepted', lastSeen: Date.now(), createdAt: Date.now() };
+  async function addManualOrQRContact({ name, avatar, deviceId, peerPublicKeyJwk }) {
+    const contact = { id: uid('contact'), deviceId: deviceId || uid('device'), name, avatar: avatar || null, status: 'accepted', lastSeen: Date.now(), createdAt: Date.now(), peerPublicKeyJwk: peerPublicKeyJwk || null };
     await upsertContact(contact);
     await ensureThread(contact.id);
     return contact;
@@ -144,14 +203,41 @@
     await upsertContact({ id: contactId, muted: !c.muted });
   }
 
+  async function setVerified(contactId, verified) {
+    await upsertContact({ id: contactId, verified: !!verified });
+  }
+
+  // ---------------- Groups ----------------
+
+  function groupById(id) { return state.groups.find((g) => g.id === id); }
+  function threadByGroup(groupId) { return state.threads.find((t) => t.groupId === groupId); }
+
+  async function createGroup(name, memberContactIds) {
+    const group = { id: uid('group'), name, memberContactIds, createdAt: Date.now() };
+    state.groups.push(group);
+    await DB.put('groups', group);
+    const thread = { id: uid('thread'), type: 'group', groupId: group.id, updatedAt: Date.now(), lastMessage: '' };
+    state.threads.push(thread);
+    await DB.put('threads', thread);
+    emit();
+    return { group, thread };
+  }
+
+  function memberContacts(group) {
+    return (group.memberContactIds || []).map((id) => contactById(id)).filter(Boolean);
+  }
+
   // ---------------- Messages ----------------
 
-  async function addMessage(threadId, { from, text, status, ttlHours, reactions }) {
+  async function addMessage(threadId, { from, text, status, ttlHours, reactions, encrypted, senderName, senderContactId }) {
     const ts = Date.now();
     const ttl = (ttlHours || state.settings.ttlDefaultHours || 0);
     const message = {
       id: uid('msg'), threadId, from, text, ts,
       status: status || (from === 'me' ? 'sent' : 'delivered'),
+      encrypted: !!encrypted,
+      senderName: senderName || null,
+      senderContactId: senderContactId || null,
       ttlExpiresAt: ttl > 0 ? ts + ttl * 3600 * 1000 : null,
       reactions: reactions || []
     };
@@ -165,6 +251,14 @@
     }
     emit();
     return message;
+  }
+
+  async function updateMessageStatus(messageId, status) {
+    const msg = state.messages.find((m) => m.id === messageId);
+    if (!msg) return;
+    msg.status = status;
+    await DB.put('messages', msg);
+    emit();
   }
 
   function messagesForThread(threadId) {
@@ -190,6 +284,29 @@
     if (state.messages.length !== before) emit();
   }
   setInterval(sweepExpiredMessages, 60 * 1000);
+
+  function searchMessages(query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return state.messages
+      .filter((m) => m.text && m.text.toLowerCase().includes(q))
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 50)
+      .map((m) => {
+        const thread = state.threads.find((t) => t.id === m.threadId);
+        let title = 'Unknown';
+        let navContactId = null;
+        if (thread && thread.contactId) {
+          const c = contactById(thread.contactId);
+          title = c ? c.name : 'Unknown';
+          navContactId = thread.contactId;
+        } else if (thread && thread.groupId) {
+          const g = groupById(thread.groupId);
+          title = g ? g.name : 'Group';
+        }
+        return { message: m, title, navContactId, groupId: thread ? thread.groupId : null };
+      });
+  }
 
   // ---------------- SOS ----------------
 
@@ -239,22 +356,38 @@
 
   // ---------------- Backup ----------------
 
-  async function exportBackup() {
+  async function exportBackup(passphrase) {
     const data = await DB.exportAll();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    let payload = JSON.stringify(data, null, 2);
+    let filename = `btzone-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    if (passphrase) {
+      payload = JSON.stringify(await window.BTZoneCrypto.encryptBackup(payload, passphrase));
+      filename = filename.replace('.json', '.encrypted.json');
+    }
+    const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `btzone-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   }
 
-  async function importBackupFile(file) {
+  async function importBackupFile(file, passphrase) {
     const text = await file.text();
-    const data = JSON.parse(text);
+    let data;
+    try {
+      data = JSON.parse(text);
+      if (data.v === 1 && data.salt && data.iv && data.data) {
+        if (!passphrase) throw new Error('PASSPHRASE_REQUIRED');
+        data = JSON.parse(await window.BTZoneCrypto.decryptBackup(data, passphrase));
+      }
+    } catch (e) {
+      if (e.message === 'PASSPHRASE_REQUIRED') throw e;
+      throw new Error('This file isn\u2019t a valid BT Zone backup, or the passphrase was wrong.');
+    }
     await DB.importAll(data);
     await loadAll();
   }
@@ -298,9 +431,12 @@
     saveSettings, saveProfile,
     contactById, threadByContact, upsertContact, ensureThread,
     addIncomingRequest, addManualOrQRContact, acceptRequest, declineAndDelete,
-    blockContact, unblock, toggleMute,
-    addMessage, messagesForThread, addReaction, sweepExpiredMessages,
+    blockContact, unblock, toggleMute, setVerified,
+    groupById, threadByGroup, createGroup, memberContacts,
+    addMessage, updateMessageStatus, messagesForThread, addReaction, sweepExpiredMessages, searchMessages,
     createSOS, receiveSOS, ackSOS, dismissSOS, activeSOS,
-    exportBackup, importBackupFile
+    exportBackup, importBackupFile,
+    myPublicKeyJwk, setContactPublicKey, sharedKeyFor,
+    setAppLockPin, disableAppLock, tryUnlock
   };
 })();

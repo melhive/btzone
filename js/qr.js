@@ -3,23 +3,24 @@
 //   - qrcode.js (window.QRCode)  -> generate
 //   - jsQR (window.jsQR)         -> decode from camera frames
 (function () {
-  function buildPayload(profile) {
+  function buildPayload(profile, publicKeyJwk) {
     return JSON.stringify({
       btzone: 1,
       id: profile.id,
       name: profile.name,
-      avatar: profile.avatar || null
+      avatar: profile.avatar || null,
+      pk: publicKeyJwk || null
     });
   }
 
-  function renderInto(el, profile) {
+  function renderInto(el, profile, publicKeyJwk) {
     el.innerHTML = '';
     if (!window.QRCode) {
       el.textContent = 'QR library unavailable offline on first load.';
       return;
     }
     new window.QRCode(el, {
-      text: buildPayload(profile),
+      text: buildPayload(profile, publicKeyJwk),
       width: 200,
       height: 200,
       colorDark: '#0A0E14',
