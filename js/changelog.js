@@ -2,6 +2,15 @@
 // Newest first.
 window.BTZONE_CHANGELOG = [
   {
+    version: '1.3.0',
+    date: '2026-09-16',
+    changes: [
+      'Fixed a bug where the "My QR code" screen could fail completely silently with no error shown',
+      'Added a global safety net that now shows a visible message if anything unexpected goes wrong, instead of failing silently',
+      'Smoother screen transitions, tactile press feedback on buttons and list items, animated message bubbles, and general motion polish throughout'
+    ]
+  },
+  {
     version: '1.2.0',
     date: '2026-09-16',
     changes: [

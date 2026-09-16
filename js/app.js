@@ -59,6 +59,20 @@
     setTimeout(() => t.remove(), 2600);
   }
 
+  // Global safety net: turn any otherwise-silent JS error into a visible
+  // toast instead of a dead button. Without this, an exception thrown
+  // inside an async handler (e.g. a rejected promise nobody awaited)
+  // fails completely silently from the user's point of view.
+  window.addEventListener('error', (event) => {
+    console.error('BT Zone uncaught error:', event.error || event.message);
+    toast('Error: ' + (event.error && event.error.message ? event.error.message : event.message));
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    console.error('BT Zone unhandled rejection:', reason);
+    toast('Error: ' + (reason && reason.message ? reason.message : String(reason)));
+  });
+
   function safe(fn, label) {
     return async (...args) => {
       try { return await fn(...args); }
@@ -157,13 +171,13 @@
       const connInfo = contact ? { connected: Conn.isConnected(contact.deviceId), connecting: connectingIds.has(contact.id), showCount: showCounts.get('c:' + match[1]) } : {};
       els.screen.innerHTML = R.threadScreen(match[1], connInfo);
       renderNav('chats');
-      scrollThreadToBottom();
+      scrollThreadToBottom(true);
     } else if ((match = r.match(/^#\/group\/(.+)$/))) {
       const group = S.groupById(match[1]);
       renderTopbar(group ? group.name : 'Group', { back: '#/chats', right: R.groupThreadHeaderActions(match[1]) });
       els.screen.innerHTML = R.groupThreadScreen(match[1], showCounts.get('g:' + match[1]));
       renderNav('chats');
-      scrollThreadToBottom();
+      scrollThreadToBottom(true);
     } else if (r === '#/radar') {
       renderTopbar('Add a Contact', { status: connectionStatusHtml() });
       els.screen.innerHTML = R.radarScreen(radarState.scanning, radarState.found);
@@ -186,13 +200,27 @@
     }
   }
 
-  function scrollThreadToBottom() {
-    requestAnimationFrame(() => { els.screen.scrollTop = els.screen.scrollHeight; });
+  function scrollThreadToBottom(smooth) {
+    requestAnimationFrame(() => {
+      if (smooth && els.screen.scrollTo) {
+        els.screen.scrollTo({ top: els.screen.scrollHeight, behavior: 'smooth' });
+      } else {
+        els.screen.scrollTop = els.screen.scrollHeight;
+      }
+    });
   }
 
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', renderWithTransition);
   S.subscribe(render);
   Conn.onChange(render);
+
+  function renderWithTransition() {
+    if (document.startViewTransition) {
+      document.startViewTransition(() => render());
+    } else {
+      render();
+    }
+  }
 
   // ---------------- Event delegation ----------------
   document.addEventListener('click', async (e) => {
@@ -483,9 +511,13 @@
   }
 
   async function showMyQR() {
-    const pk = await S.myPublicKeyJwk();
+    let pk = null;
+    try { pk = await S.myPublicKeyJwk(); } catch (e) { console.error('Could not load public key', e); }
     openSheet(`<div id="qr-target" class="qr-box"></div><p style="text-align:center;color:var(--text-secondary);font-size:13px">Have someone scan this to add you instantly — this also exchanges encryption keys.</p>`, { title: 'My QR code' });
-    setTimeout(() => QR.renderInto(document.getElementById('qr-target'), S.state.profile, pk), 0);
+    setTimeout(() => {
+      try { QR.renderInto(document.getElementById('qr-target'), S.state.profile, pk); }
+      catch (e) { console.error('QR render failed', e); toast('Could not generate QR code: ' + e.message); }
+    }, 0);
   }
 
   function showScanQR() {
