@@ -1,7 +1,7 @@
 // BT Zone service worker
 // APP_VERSION drives both cache-busting and the "What's New" screen.
 // Bump this string (and add an entry to js/changelog.js) on every release.
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 const CACHE_NAME = `btzone-cache-${APP_VERSION}`;
 
 const APP_SHELL = [

@@ -2,6 +2,15 @@
 // Newest first.
 window.BTZONE_CHANGELOG = [
   {
+    version: '1.3.1',
+    date: '2026-09-16',
+    changes: [
+      'Fixed "code length overflow" error when generating your QR code — the QR library\u2019s default size was far too small once an encryption key was added to it',
+      'Profile photos are no longer included in the QR payload (an image is too large for any QR code); they still sync once two devices connect',
+      'QR generation now falls back to a smaller payload instead of failing outright if it would still overflow'
+    ]
+  },
+  {
     version: '1.3.0',
     date: '2026-09-16',
     changes: [

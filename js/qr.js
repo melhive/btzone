@@ -4,28 +4,45 @@
 //   - jsQR (window.jsQR)         -> decode from camera frames
 (function () {
   function buildPayload(profile, publicKeyJwk) {
+    // Deliberately excludes avatar — a full image data: URL is many KB,
+    // far beyond what any QR code can hold. Avatars sync separately once
+    // two devices actually connect and exchange a handshake packet.
     return JSON.stringify({
       btzone: 1,
       id: profile.id,
       name: profile.name,
-      avatar: profile.avatar || null,
       pk: publicKeyJwk || null
     });
   }
 
+  // qrcodejs (vendor/qrcode.min.js) defaults to typeNumber 4 with the
+  // highest error-correction level, which only holds ~34 bytes — nowhere
+  // near enough once a public key is included. We explicitly request a
+  // larger, lower-error-correction code sized for our payload, and if
+  // it *still* overflows (e.g. a very long name), we fall back to a
+  // minimal payload rather than showing nothing at all — the recipient
+  // can still add the contact; encryption keys then exchange the normal
+  // way once the devices actually connect.
   function renderInto(el, profile, publicKeyJwk) {
     el.innerHTML = '';
     if (!window.QRCode) {
       el.textContent = 'QR library unavailable offline on first load.';
       return;
     }
-    new window.QRCode(el, {
-      text: buildPayload(profile, publicKeyJwk),
-      width: 200,
-      height: 200,
-      colorDark: '#0A0E14',
-      colorLight: '#ffffff'
-    });
+    const opts = { width: 220, height: 220, colorDark: '#0A0E14', colorLight: '#ffffff', typeNumber: 15, correctLevel: window.QRCode.CorrectLevel.L };
+    try {
+      new window.QRCode(el, Object.assign({ text: buildPayload(profile, publicKeyJwk) }, opts));
+    } catch (e) {
+      console.error('QR overflow with full payload, retrying without public key', e);
+      el.innerHTML = '';
+      try {
+        new window.QRCode(el, Object.assign({ text: buildPayload(profile, null) }, opts));
+      } catch (e2) {
+        console.error('QR still overflowed with minimal payload', e2);
+        el.innerHTML = '';
+        el.textContent = 'Could not generate QR code — display name may be too long.';
+      }
+    }
   }
 
   let stream = null;
